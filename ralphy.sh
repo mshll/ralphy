@@ -34,9 +34,12 @@ PR_DRAFT=false
 PARALLEL=false
 MAX_PARALLEL=3
 
+# Output directory (for PRD, progress.txt, and other outputs)
+OUTPUT_DIR="spec"
+
 # PRD source options
 PRD_SOURCE="markdown"  # markdown, yaml, github
-PRD_FILE="PRD.md"
+PRD_FILE="PRD.md"      # relative to OUTPUT_DIR
 GITHUB_REPO=""
 GITHUB_LABEL=""
 
@@ -140,7 +143,8 @@ ${BOLD}GIT BRANCH OPTIONS:${RESET}
   --draft-pr          Create PRs as drafts
 
 ${BOLD}PRD SOURCE OPTIONS:${RESET}
-  --prd FILE          PRD file path (default: PRD.md)
+  --output-dir DIR    Output directory for PRD and progress.txt (default: spec)
+  --prd FILE          PRD filename relative to output dir (default: PRD.md)
   --yaml FILE         Use YAML task file instead of markdown
   --github REPO       Fetch tasks from GitHub issues (e.g., owner/repo)
   --github-label TAG  Filter GitHub issues by label
@@ -270,6 +274,10 @@ parse_args() {
         GITHUB_LABEL="${2:-}"
         shift 2
         ;;
+      --output-dir)
+        OUTPUT_DIR="${2:-spec}"
+        shift 2
+        ;;
       -v|--verbose)
         VERBOSE=true
         shift
@@ -301,14 +309,14 @@ check_requirements() {
   # Check for PRD source
   case "$PRD_SOURCE" in
     markdown)
-      if [[ ! -f "$PRD_FILE" ]]; then
-        log_error "$PRD_FILE not found in current directory"
+      if [[ ! -f "$OUTPUT_DIR/$PRD_FILE" ]]; then
+        log_error "$OUTPUT_DIR/$PRD_FILE not found"
         exit 1
       fi
       ;;
     yaml)
-      if [[ ! -f "$PRD_FILE" ]]; then
-        log_error "$PRD_FILE not found in current directory"
+      if [[ ! -f "$OUTPUT_DIR/$PRD_FILE" ]]; then
+        log_error "$OUTPUT_DIR/$PRD_FILE not found"
         exit 1
       fi
       if ! command -v yq &>/dev/null; then
@@ -366,10 +374,16 @@ check_requirements() {
     log_warn "Token tracking may not work properly"
   fi
 
+  # Create output directory if missing
+  if [[ ! -d "$OUTPUT_DIR" ]]; then
+    log_warn "$OUTPUT_DIR not found, creating it..."
+    mkdir -p "$OUTPUT_DIR"
+  fi
+
   # Create progress.txt if missing
-  if [[ ! -f "progress.txt" ]]; then
-    log_warn "progress.txt not found, creating it..."
-    touch progress.txt
+  if [[ ! -f "$OUTPUT_DIR/progress.txt" ]]; then
+    log_warn "$OUTPUT_DIR/progress.txt not found, creating it..."
+    touch "$OUTPUT_DIR/progress.txt"
   fi
 
   # Set base branch if not specified
@@ -427,19 +441,19 @@ cleanup() {
 # ============================================
 
 get_tasks_markdown() {
-  grep '^\- \[ \]' "$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' || true
+  grep '^\- \[ \]' "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' || true
 }
 
 get_next_task_markdown() {
-  grep -m1 '^\- \[ \]' "$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' | cut -c1-50 || echo ""
+  grep -m1 '^\- \[ \]' "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null | sed 's/^- \[ \] //' | cut -c1-50 || echo ""
 }
 
 count_remaining_markdown() {
-  grep -c '^\- \[ \]' "$PRD_FILE" 2>/dev/null || echo "0"
+  grep -c '^\- \[ \]' "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null || echo "0"
 }
 
 count_completed_markdown() {
-  grep -c '^\- \[x\]' "$PRD_FILE" 2>/dev/null || echo "0"
+  grep -c '^\- \[x\]' "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null || echo "0"
 }
 
 mark_task_complete_markdown() {
@@ -449,8 +463,8 @@ mark_task_complete_markdown() {
   # - NOT escape: { } ( ) + ? | (these are literal in BRE)
   local escaped_task
   escaped_task=$(printf '%s\n' "$task" | sed 's/[[\.*^$/]/\\&/g')
-  sed -i.bak "s/^- \[ \] ${escaped_task}/- [x] ${escaped_task}/" "$PRD_FILE"
-  rm -f "${PRD_FILE}.bak"
+  sed -i.bak "s/^- \[ \] ${escaped_task}/- [x] ${escaped_task}/" "$OUTPUT_DIR/$PRD_FILE"
+  rm -f "$OUTPUT_DIR/${PRD_FILE}.bak"
 }
 
 # ============================================
@@ -458,34 +472,34 @@ mark_task_complete_markdown() {
 # ============================================
 
 get_tasks_yaml() {
-  yq -r '.tasks[] | select(.completed != true) | .title' "$PRD_FILE" 2>/dev/null || true
+  yq -r '.tasks[] | select(.completed != true) | .title' "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null || true
 }
 
 get_next_task_yaml() {
-  yq -r '.tasks[] | select(.completed != true) | .title' "$PRD_FILE" 2>/dev/null | head -1 | cut -c1-50 || echo ""
+  yq -r '.tasks[] | select(.completed != true) | .title' "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null | head -1 | cut -c1-50 || echo ""
 }
 
 count_remaining_yaml() {
-  yq -r '[.tasks[] | select(.completed != true)] | length' "$PRD_FILE" 2>/dev/null || echo "0"
+  yq -r '[.tasks[] | select(.completed != true)] | length' "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null || echo "0"
 }
 
 count_completed_yaml() {
-  yq -r '[.tasks[] | select(.completed == true)] | length' "$PRD_FILE" 2>/dev/null || echo "0"
+  yq -r '[.tasks[] | select(.completed == true)] | length' "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null || echo "0"
 }
 
 mark_task_complete_yaml() {
   local task=$1
-  yq -i "(.tasks[] | select(.title == \"$task\")).completed = true" "$PRD_FILE"
+  yq -i "(.tasks[] | select(.title == \"$task\")).completed = true" "$OUTPUT_DIR/$PRD_FILE"
 }
 
 get_parallel_group_yaml() {
   local task=$1
-  yq -r ".tasks[] | select(.title == \"$task\") | .parallel_group // 0" "$PRD_FILE" 2>/dev/null || echo "0"
+  yq -r ".tasks[] | select(.title == \"$task\") | .parallel_group // 0" "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null || echo "0"
 }
 
 get_tasks_in_group_yaml() {
   local group=$1
-  yq -r ".tasks[] | select(.completed != true and .parallel_group == $group) | .title" "$PRD_FILE" 2>/dev/null || true
+  yq -r ".tasks[] | select(.completed != true and .parallel_group == $group) | .title" "$OUTPUT_DIR/$PRD_FILE" 2>/dev/null || true
 }
 
 # ============================================
@@ -773,10 +787,10 @@ build_prompt() {
   # Add context based on PRD source
   case "$PRD_SOURCE" in
     markdown)
-      prompt="@${PRD_FILE} @progress.txt"
+      prompt="@${OUTPUT_DIR}/${PRD_FILE} @${OUTPUT_DIR}/progress.txt"
       ;;
     yaml)
-      prompt="@${PRD_FILE} @progress.txt"
+      prompt="@${OUTPUT_DIR}/${PRD_FILE} @${OUTPUT_DIR}/progress.txt"
       ;;
     github)
       # For GitHub issues, we include the issue body
@@ -789,7 +803,7 @@ build_prompt() {
 Issue Description:
 $issue_body
 
-@progress.txt"
+@${OUTPUT_DIR}/progress.txt"
       ;;
   esac
   
@@ -815,22 +829,22 @@ $step. Run linting and ensure it passes before proceeding."
   case "$PRD_SOURCE" in
     markdown)
       prompt="$prompt
-$step. Update the PRD to mark the task as complete (change '- [ ]' to '- [x]')."
+$step. Update ${OUTPUT_DIR}/${PRD_FILE} to mark the task as complete (change '- [ ]' to '- [x]')."
       ;;
     yaml)
       prompt="$prompt
-$step. Update ${PRD_FILE} to mark the task as completed (set completed: true)."
+$step. Update ${OUTPUT_DIR}/${PRD_FILE} to mark the task as completed (set completed: true)."
       ;;
     github)
       prompt="$prompt
-$step. The task will be marked complete automatically. Just note the completion in progress.txt."
+$step. The task will be marked complete automatically. Just note the completion in ${OUTPUT_DIR}/progress.txt."
       ;;
   esac
-  
+
   step=$((step+1))
-  
+
   prompt="$prompt
-$step. Append your progress to progress.txt.
+$step. Append your progress to ${OUTPUT_DIR}/progress.txt.
 $((step+1)). Commit your changes with a descriptive message.
 ONLY WORK ON A SINGLE TASK."
 
@@ -1269,15 +1283,17 @@ run_parallel_agent() {
   fi
   
   echo "running" > "$status_file"
-  
-  # Copy PRD file to worktree from original directory
+
+  # Copy PRD file and output dir to worktree from original directory
   if [[ "$PRD_SOURCE" == "markdown" ]] || [[ "$PRD_SOURCE" == "yaml" ]]; then
-    cp "$ORIGINAL_DIR/$PRD_FILE" "$worktree_dir/" 2>/dev/null || true
+    mkdir -p "$worktree_dir/$OUTPUT_DIR"
+    cp "$ORIGINAL_DIR/$OUTPUT_DIR/$PRD_FILE" "$worktree_dir/$OUTPUT_DIR/$PRD_FILE" 2>/dev/null || true
   fi
-  
+
   # Ensure progress.txt exists in worktree
-  touch "$worktree_dir/progress.txt"
-  
+  mkdir -p "$worktree_dir/$OUTPUT_DIR"
+  touch "$worktree_dir/$OUTPUT_DIR/progress.txt"
+
   # Build prompt for this specific task
   local prompt="You are working on a specific task. Focus ONLY on this task:
 
@@ -1286,10 +1302,10 @@ TASK: $task_name
 Instructions:
 1. Implement this specific task completely
 2. Write tests if appropriate
-3. Update progress.txt with what you did
+3. Update ${OUTPUT_DIR}/progress.txt with what you did
 4. Commit your changes with a descriptive message
 
-Do NOT modify PRD.md or mark tasks complete - that will be handled separately.
+Do NOT modify the PRD or mark tasks complete - that will be handled separately.
 Focus only on implementing: $task_name"
 
   # Temp file for AI output
@@ -1420,7 +1436,7 @@ run_parallel_tasks() {
   log_info "Base branch: $BASE_BRANCH"
   
   # Export variables needed by subshell agents
-  export AI_ENGINE MAX_RETRIES RETRY_DELAY PRD_SOURCE PRD_FILE CREATE_PR PR_DRAFT
+  export AI_ENGINE MAX_RETRIES RETRY_DELAY PRD_SOURCE PRD_FILE CREATE_PR PR_DRAFT OUTPUT_DIR
   
   # Process tasks in batches
   local batch_start=0
@@ -1843,8 +1859,15 @@ main() {
     *) engine_display="${MAGENTA}Claude Code${RESET}" ;;
   esac
   echo "Engine: $engine_display"
-  echo "Source: ${CYAN}$PRD_SOURCE${RESET} (${PRD_FILE:-$GITHUB_REPO})"
-  
+  local source_display
+  if [[ "$PRD_SOURCE" == "github" ]]; then
+    source_display="$GITHUB_REPO"
+  else
+    source_display="$OUTPUT_DIR/$PRD_FILE"
+  fi
+  echo "Source: ${CYAN}$PRD_SOURCE${RESET} ($source_display)"
+  echo "Output: ${CYAN}$OUTPUT_DIR${RESET}"
+
   local mode_parts=()
   [[ "$SKIP_TESTS" == true ]] && mode_parts+=("no-tests")
   [[ "$SKIP_LINT" == true ]] && mode_parts+=("no-lint")
