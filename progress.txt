@@ -1,0 +1,18 @@
+## 2026-01-16: Set up Go project with basic HTTP server
+
+### Completed
+- Created go.mod with module github.com/ralphy/taskserver (Go 1.21)
+- Created main.go with:
+  - Task struct with ID, Title, Description, Completed, and CreatedAt fields
+  - TaskStore for thread-safe in-memory storage using sync.RWMutex
+  - Server struct with HTTP handlers for all CRUD operations
+  - Routes: GET/POST /tasks and GET/DELETE /tasks/{id}
+  - Proper Content-Type headers (application/json)
+  - Appropriate HTTP status codes (200, 201, 204, 400, 404, 405, 500)
+- Created main_test.go with comprehensive tests:
+  - TaskStore unit tests (Create, Get, GetAll, Delete)
+  - Server integration tests for all endpoints
+  - Error handling tests (invalid JSON, missing title, 404s, method not allowed)
+
+### Test Results
+All 18 tests passing.
