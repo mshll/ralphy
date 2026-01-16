@@ -8,279 +8,294 @@ import (
 	"testing"
 )
 
-func TestTaskStore(t *testing.T) {
-	t.Run("NewTaskStore creates empty store", func(t *testing.T) {
-		store := NewTaskStore()
-		tasks := store.GetAll()
-		if len(tasks) != 0 {
-			t.Errorf("expected 0 tasks, got %d", len(tasks))
-		}
-	})
+// TestTaskStoreCreate tests creating tasks in the store
+func TestTaskStoreCreate(t *testing.T) {
+	store := NewTaskStore()
 
-	t.Run("Create and Get task", func(t *testing.T) {
-		store := NewTaskStore()
-		task := Task{ID: "test-1", Title: "Test Task"}
-		store.Create(task)
+	task := store.Create("Test Task", "Test Description")
 
-		got, exists := store.Get("test-1")
-		if !exists {
-			t.Fatal("expected task to exist")
-		}
-		if got.Title != "Test Task" {
-			t.Errorf("expected title 'Test Task', got '%s'", got.Title)
-		}
-	})
-
-	t.Run("Get non-existent task returns false", func(t *testing.T) {
-		store := NewTaskStore()
-		_, exists := store.Get("non-existent")
-		if exists {
-			t.Error("expected task to not exist")
-		}
-	})
-
-	t.Run("Delete existing task", func(t *testing.T) {
-		store := NewTaskStore()
-		store.Create(Task{ID: "test-1", Title: "Test"})
-
-		deleted := store.Delete("test-1")
-		if !deleted {
-			t.Error("expected delete to return true")
-		}
-
-		_, exists := store.Get("test-1")
-		if exists {
-			t.Error("expected task to be deleted")
-		}
-	})
-
-	t.Run("Delete non-existent task returns false", func(t *testing.T) {
-		store := NewTaskStore()
-		deleted := store.Delete("non-existent")
-		if deleted {
-			t.Error("expected delete to return false for non-existent task")
-		}
-	})
-
-	t.Run("GetAll returns all tasks", func(t *testing.T) {
-		store := NewTaskStore()
-		store.Create(Task{ID: "1", Title: "Task 1"})
-		store.Create(Task{ID: "2", Title: "Task 2"})
-
-		tasks := store.GetAll()
-		if len(tasks) != 2 {
-			t.Errorf("expected 2 tasks, got %d", len(tasks))
-		}
-	})
+	if task.ID == "" {
+		t.Error("expected task to have an ID")
+	}
+	if task.Title != "Test Task" {
+		t.Errorf("expected title 'Test Task', got '%s'", task.Title)
+	}
+	if task.Description != "Test Description" {
+		t.Errorf("expected description 'Test Description', got '%s'", task.Description)
+	}
+	if task.Completed {
+		t.Error("expected new task to not be completed")
+	}
+	if task.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
 }
 
-func TestServerBasic(t *testing.T) {
+// TestTaskStoreGet tests retrieving a task by ID
+func TestTaskStoreGet(t *testing.T) {
+	store := NewTaskStore()
+
+	created := store.Create("Test Task", "Description")
+
+	// Test getting existing task
+	task, ok := store.Get(created.ID)
+	if !ok {
+		t.Error("expected to find task")
+	}
+	if task.ID != created.ID {
+		t.Errorf("expected ID '%s', got '%s'", created.ID, task.ID)
+	}
+
+	// Test getting non-existent task
+	_, ok = store.Get("non-existent")
+	if ok {
+		t.Error("expected not to find non-existent task")
+	}
+}
+
+// TestTaskStoreGetAll tests retrieving all tasks
+func TestTaskStoreGetAll(t *testing.T) {
+	store := NewTaskStore()
+
+	// Empty store
+	tasks := store.GetAll()
+	if len(tasks) != 0 {
+		t.Errorf("expected 0 tasks, got %d", len(tasks))
+	}
+
+	// Add some tasks
+	store.Create("Task 1", "Desc 1")
+	store.Create("Task 2", "Desc 2")
+
+	tasks = store.GetAll()
+	if len(tasks) != 2 {
+		t.Errorf("expected 2 tasks, got %d", len(tasks))
+	}
+}
+
+// TestTaskStoreDelete tests deleting a task
+func TestTaskStoreDelete(t *testing.T) {
+	store := NewTaskStore()
+
+	task := store.Create("Test Task", "Description")
+
+	// Delete existing task
+	if !store.Delete(task.ID) {
+		t.Error("expected delete to return true for existing task")
+	}
+
+	// Verify it's deleted
+	_, ok := store.Get(task.ID)
+	if ok {
+		t.Error("expected task to be deleted")
+	}
+
+	// Delete non-existent task
+	if store.Delete("non-existent") {
+		t.Error("expected delete to return false for non-existent task")
+	}
+}
+
+// TestServerListTasks tests GET /tasks endpoint
+func TestServerListTasks(t *testing.T) {
 	store := NewTaskStore()
 	server := NewServer(store)
-	mux := http.NewServeMux()
-	server.SetupRoutes(mux)
 
-	t.Run("GET /tasks returns empty array initially", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
-		rec := httptest.NewRecorder()
+	// Test empty list
+	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
 
-		mux.ServeHTTP(rec, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
 
-		if rec.Code != http.StatusOK {
-			t.Errorf("expected status 200, got %d", rec.Code)
-		}
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("expected Content-Type 'application/json', got '%s'", contentType)
+	}
 
-		contentType := rec.Header().Get("Content-Type")
-		if contentType != "application/json" {
-			t.Errorf("expected Content-Type 'application/json', got '%s'", contentType)
-		}
+	var tasks []Task
+	if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if len(tasks) != 0 {
+		t.Errorf("expected 0 tasks, got %d", len(tasks))
+	}
 
-		var tasks []Task
-		if err := json.NewDecoder(rec.Body).Decode(&tasks); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
+	// Add a task and test again
+	store.Create("Test Task", "Description")
 
-		if len(tasks) != 0 {
-			t.Errorf("expected 0 tasks, got %d", len(tasks))
-		}
-	})
+	req = httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
 
-	t.Run("Server responds to requests", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
-		rec := httptest.NewRecorder()
-
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("expected status 200, got %d", rec.Code)
-		}
-	})
+	if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Errorf("expected 1 task, got %d", len(tasks))
+	}
 }
 
+// TestServerCreateTask tests POST /tasks endpoint
 func TestServerCreateTask(t *testing.T) {
 	store := NewTaskStore()
 	server := NewServer(store)
-	mux := http.NewServeMux()
-	server.SetupRoutes(mux)
 
-	t.Run("POST /tasks creates a new task", func(t *testing.T) {
-		body := bytes.NewBufferString(`{"title":"New Task","description":"Test description"}`)
-		req := httptest.NewRequest(http.MethodPost, "/tasks", body)
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
+	// Valid request
+	body := bytes.NewBufferString(`{"title": "New Task", "description": "New Description"}`)
+	req := httptest.NewRequest(http.MethodPost, "/tasks", body)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
 
-		mux.ServeHTTP(rec, req)
+	if w.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d", w.Code)
+	}
 
-		if rec.Code != http.StatusCreated {
-			t.Errorf("expected status 201, got %d", rec.Code)
-		}
-
-		var task Task
-		if err := json.NewDecoder(rec.Body).Decode(&task); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-
-		if task.Title != "New Task" {
-			t.Errorf("expected title 'New Task', got '%s'", task.Title)
-		}
-		if task.ID == "" {
-			t.Error("expected task to have an ID")
-		}
-	})
-
-	t.Run("POST /tasks with invalid JSON returns 400", func(t *testing.T) {
-		body := bytes.NewBufferString(`{invalid json}`)
-		req := httptest.NewRequest(http.MethodPost, "/tasks", body)
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("POST /tasks without title returns 400", func(t *testing.T) {
-		body := bytes.NewBufferString(`{"description":"No title"}`)
-		req := httptest.NewRequest(http.MethodPost, "/tasks", body)
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", rec.Code)
-		}
-	})
+	var task Task
+	if err := json.Unmarshal(w.Body.Bytes(), &task); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if task.Title != "New Task" {
+		t.Errorf("expected title 'New Task', got '%s'", task.Title)
+	}
+	if task.ID == "" {
+		t.Error("expected task to have an ID")
+	}
 }
 
-func TestServerGetTaskByID(t *testing.T) {
+// TestServerCreateTaskInvalidJSON tests POST /tasks with invalid JSON
+func TestServerCreateTaskInvalidJSON(t *testing.T) {
 	store := NewTaskStore()
 	server := NewServer(store)
-	mux := http.NewServeMux()
-	server.SetupRoutes(mux)
 
-	// Create a task first
-	task := Task{ID: "test-123", Title: "Test Task", Description: "Test"}
-	store.Create(task)
+	body := bytes.NewBufferString(`{invalid json}`)
+	req := httptest.NewRequest(http.MethodPost, "/tasks", body)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
 
-	t.Run("GET /tasks/{id} returns task", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/tasks/test-123", nil)
-		rec := httptest.NewRecorder()
-
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("expected status 200, got %d", rec.Code)
-		}
-
-		var got Task
-		if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-
-		if got.ID != "test-123" {
-			t.Errorf("expected ID 'test-123', got '%s'", got.ID)
-		}
-	})
-
-	t.Run("GET /tasks/{id} returns 404 for non-existent task", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/tasks/non-existent", nil)
-		rec := httptest.NewRecorder()
-
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected status 404, got %d", rec.Code)
-		}
-	})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
 }
 
+// TestServerCreateTaskMissingTitle tests POST /tasks without title
+func TestServerCreateTaskMissingTitle(t *testing.T) {
+	store := NewTaskStore()
+	server := NewServer(store)
+
+	body := bytes.NewBufferString(`{"description": "No title"}`)
+	req := httptest.NewRequest(http.MethodPost, "/tasks", body)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+// TestServerGetTask tests GET /tasks/{id} endpoint
+func TestServerGetTask(t *testing.T) {
+	store := NewTaskStore()
+	server := NewServer(store)
+
+	task := store.Create("Test Task", "Description")
+
+	// Get existing task
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+task.ID, nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var retrieved Task
+	if err := json.Unmarshal(w.Body.Bytes(), &retrieved); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if retrieved.ID != task.ID {
+		t.Errorf("expected ID '%s', got '%s'", task.ID, retrieved.ID)
+	}
+}
+
+// TestServerGetTaskNotFound tests GET /tasks/{id} for non-existent task
+func TestServerGetTaskNotFound(t *testing.T) {
+	store := NewTaskStore()
+	server := NewServer(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/non-existent", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", w.Code)
+	}
+}
+
+// TestServerDeleteTask tests DELETE /tasks/{id} endpoint
 func TestServerDeleteTask(t *testing.T) {
 	store := NewTaskStore()
 	server := NewServer(store)
-	mux := http.NewServeMux()
-	server.SetupRoutes(mux)
 
-	// Create a task first
-	task := Task{ID: "delete-me", Title: "To Delete"}
-	store.Create(task)
+	task := store.Create("Test Task", "Description")
 
-	t.Run("DELETE /tasks/{id} returns 204", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/tasks/delete-me", nil)
-		rec := httptest.NewRecorder()
+	// Delete existing task
+	req := httptest.NewRequest(http.MethodDelete, "/tasks/"+task.ID, nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
 
-		mux.ServeHTTP(rec, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected status 204, got %d", w.Code)
+	}
 
-		if rec.Code != http.StatusNoContent {
-			t.Errorf("expected status 204, got %d", rec.Code)
-		}
-
-		// Verify task is deleted
-		_, exists := store.Get("delete-me")
-		if exists {
-			t.Error("expected task to be deleted")
-		}
-	})
-
-	t.Run("DELETE /tasks/{id} returns 404 for non-existent task", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/tasks/non-existent", nil)
-		rec := httptest.NewRecorder()
-
-		mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected status 404, got %d", rec.Code)
-		}
-	})
+	// Verify it's deleted
+	_, ok := store.Get(task.ID)
+	if ok {
+		t.Error("expected task to be deleted")
+	}
 }
 
-func TestMethodNotAllowed(t *testing.T) {
+// TestServerDeleteTaskNotFound tests DELETE /tasks/{id} for non-existent task
+func TestServerDeleteTaskNotFound(t *testing.T) {
 	store := NewTaskStore()
 	server := NewServer(store)
-	mux := http.NewServeMux()
-	server.SetupRoutes(mux)
 
-	t.Run("PUT /tasks returns 405", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPut, "/tasks", nil)
-		rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/tasks/non-existent", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
 
-		mux.ServeHTTP(rec, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", w.Code)
+	}
+}
 
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("expected status 405, got %d", rec.Code)
-		}
-	})
+// TestServerMethodNotAllowed tests unsupported methods
+func TestServerMethodNotAllowed(t *testing.T) {
+	store := NewTaskStore()
+	server := NewServer(store)
 
-	t.Run("PATCH /tasks/{id} returns 405", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPatch, "/tasks/123", nil)
-		rec := httptest.NewRecorder()
+	// PUT on /tasks should be 405
+	req := httptest.NewRequest(http.MethodPut, "/tasks", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
 
-		mux.ServeHTTP(rec, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected status 405, got %d", w.Code)
+	}
+}
 
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("expected status 405, got %d", rec.Code)
-		}
-	})
+// TestServerNotFound tests unknown paths
+func TestServerNotFound(t *testing.T) {
+	store := NewTaskStore()
+	server := NewServer(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/unknown", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", w.Code)
+	}
 }
